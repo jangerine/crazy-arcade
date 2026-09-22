@@ -1,4 +1,5 @@
 export type PlayerId = 1 | 2;
+export type Facing = 'up' | 'down' | 'left' | 'right';
 
 export interface Player {
   id: PlayerId;
@@ -13,6 +14,9 @@ export interface Player {
   range: number; // 물줄기 길이
   color: string;
   alive: boolean;
+  lives: number; // 솔로 모드용
+  facing: Facing;
+  invincibleUntil: number;
 }
 
 export function createPlayer(
@@ -34,5 +38,8 @@ export function createPlayer(
     range: 2,
     color,
     alive: true,
+    lives: 3,
+    facing: 'down',
+    invincibleUntil: 0,
   };
 }
