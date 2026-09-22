@@ -40,6 +40,8 @@ export class Engine {
   score = 0;
   best = Number(localStorage.getItem(BEST_KEY) ?? 0) || 0;
   clearBannerUntil = 0;
+  /** 폭탄별 통과 허용 엔티티 (설치 순간 밟고 있던 주체. 갇힘 방지용) */
+  private bombPass = new Map<Bomb, Set<string>>();
   /** 온라인 host가 guest에게 받은 최신 입력 (P2 조종용) */
   guestInput = { dx: 0, dy: 0 };
   /** 스냅샷 방송 훅 (main에서 net.sendSnap 연결) */
@@ -114,6 +116,7 @@ export class Engine {
     this.players = [];
     this.enemies = [];
     this.bombs = [];
+    this.bombPass.clear();
     this.explosions = [];
     this.items = [];
     this.winner = null;
@@ -139,6 +142,7 @@ export class Engine {
     this.players = [p1, p2];
     this.enemies = [];
     this.bombs = [];
+    this.bombPass.clear();
     this.explosions = [];
     this.items = [];
     this.touchDirs = { 1: new Set(), 2: new Set() };
@@ -176,6 +180,7 @@ export class Engine {
     this.players = [p1, p2];
     this.enemies = [];
     this.bombs = [];
+    this.bombPass.clear();
     this.explosions = [];
     this.items = [];
     this.touchDirs = { 1: new Set(), 2: new Set() };
@@ -198,6 +203,7 @@ export class Engine {
     this.players = [];
     this.enemies = [];
     this.bombs = [];
+    this.bombPass.clear();
     this.explosions = [];
     this.items = [];
     this.touchDirs = { 1: new Set(), 2: new Set() };
@@ -272,6 +278,7 @@ export class Engine {
       facing: s.facing,
       invincibleUntil: now + s.invincibleIn,
     }));
+    this.bombPass.clear();
     this.bombs = snap.bombs.map((s) => ({
       x: s.x,
       y: s.y,
@@ -338,6 +345,7 @@ export class Engine {
     p.invincibleUntil = performance.now() + 2000;
     this.players = [p];
     this.bombs = [];
+    this.bombPass.clear();
     this.explosions = [];
     this.items = [];
     this.touchDirs = { 1: new Set(), 2: new Set() };
@@ -379,7 +387,23 @@ export class Engine {
     if (this.bombs.some((b) => b.x === tx && b.y === ty)) return;
     if (this.map[ty]?.[tx] !== Tile.Empty) return;
     if (this.items.some((it) => it.x === tx && it.y === ty)) return;
-    this.bombs.push(createBomb(tx, ty, player.id, player.range, now));
+    const bomb = createBomb(tx, ty, player.id, player.range, now);
+    this.bombs.push(bomb);
+    // 설치 순간 밟고 있던 엔티티는 폭발 전까지 통과 허용 (갇힘 방지).
+    // 반올림 위치 기준이 아니라 설치 시점에 기록해야, 빠져나가는 도중
+    // 반올림 칸이 바뀌어도 통과가 유지됨.
+    const pass = new Set<string>();
+    for (const pl of this.players) {
+      if (pl.alive && Math.round(pl.x) === tx && Math.round(pl.y) === ty) {
+        pass.add(`p${pl.id}`);
+      }
+    }
+    for (const en of this.enemies) {
+      if (en.alive && Math.round(en.x) === tx && Math.round(en.y) === ty) {
+        pass.add(`e${en.id}`);
+      }
+    }
+    this.bombPass.set(bomb, pass);
     sound.play('place');
   }
 
@@ -424,8 +448,9 @@ export class Engine {
       else if (dy === 1) p.facing = 'down';
       const nx = p.x + dx * p.speed * dt;
       const ny = p.y + dy * p.speed * dt;
-      if (this.canStandEntity(nx, p.y, p.x, p.y, true)) p.x = nx;
-      if (this.canStandEntity(p.x, ny, p.x, p.y, true)) p.y = ny;
+      const key = `p${p.id}`;
+      if (this.canStandEntity(nx, p.y, key)) p.x = nx;
+      if (this.canStandEntity(p.x, ny, key)) p.y = ny;
       if (dx === 0 && dy === 0) {
         p.x = Math.round(p.x * 2) / 2;
         p.y = Math.round(p.y * 2) / 2;
@@ -443,13 +468,14 @@ export class Engine {
       }
       const nx = e.x + e.dx * e.speed * dt;
       const ny = e.y + e.dy * e.speed * dt;
-      if (this.canStandEntity(nx, e.y, e.x, e.y, false)) {
+      const key = `e${e.id}`;
+      if (this.canStandEntity(nx, e.y, key)) {
         e.x = nx;
       } else {
         e.dx = 0;
         e.retargetAt = 0; // 다음 틱에 즉시 재탐색
       }
-      if (this.canStandEntity(e.x, ny, e.x, e.y, false)) {
+      if (this.canStandEntity(e.x, ny, key)) {
         e.y = ny;
       } else {
         e.dy = 0;
@@ -573,9 +599,7 @@ export class Engine {
       if (!tryDirs.some((t) => t.dx === d.dx && t.dy === d.dy)) tryDirs.push(d);
     }
     for (const d of tryDirs) {
-      if (
-        this.canStandEntity(e.x + d.dx * 0.5, e.y + d.dy * 0.5, e.x, e.y, false)
-      ) {
+      if (this.canStandEntity(e.x + d.dx * 0.5, e.y + d.dy * 0.5, `e${e.id}`)) {
         return d;
       }
     }
@@ -616,16 +640,8 @@ export class Engine {
     return { dx, dy };
   }
 
-  private canStandEntity(
-    x: number,
-    y: number,
-    selfX: number,
-    selfY: number,
-    allowEscape: boolean,
-  ): boolean {
+  private canStandEntity(x: number, y: number, key: string): boolean {
     const r = 0.3;
-    const selfTX = Math.round(selfX);
-    const selfTY = Math.round(selfY);
     const corners = [
       [x - r, y - r],
       [x + r, y - r],
@@ -639,7 +655,8 @@ export class Engine {
       if (this.map[ty][tx] !== Tile.Empty) return false;
       const bomb = this.bombs.find((b) => b.x === tx && b.y === ty);
       if (bomb) {
-        if (allowEscape && bomb.x === selfTX && bomb.y === selfTY) return true;
+        // 설치 순간 밟고 있던 엔티티만 통과. 나머지는 진입 불가.
+        if (this.bombPass.get(bomb)?.has(key)) return true;
         return false;
       }
       return true;
@@ -647,6 +664,7 @@ export class Engine {
   }
 
   private explode(bomb: Bomb, now: number): void {
+    this.bombPass.delete(bomb);
     const cells = [{ x: bomb.x, y: bomb.y }];
     const dirs = [
       [1, 0],
