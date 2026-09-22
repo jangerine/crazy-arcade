@@ -40,6 +40,7 @@ export interface Snapshot {
   winner: 1 | 2 | 0 | null;
   score: number;
   stage: number;
+  mapId: string;
   map: number[][];
   players: SnapPlayer[];
   bombs: SnapBomb[];

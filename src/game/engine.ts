@@ -2,7 +2,13 @@ import { BOMB_FUSE_MS, COLS, EXPLOSION_MS, ROWS, TILE, Tile } from './constants'
 import { createBomb, isBombReadyToExplode, type Bomb, type Explosion } from './bomb';
 import { spawnEnemies, type Enemy } from './enemy';
 import { applyItem, rollItem, type Item } from './item';
-import { createMap, type GameMap } from './map';
+import { type GameMap } from './map';
+import {
+  buildSelectedMap,
+  getMapDef,
+  loadMapId,
+  themeFor,
+} from './maps';
 import { createPlayer, type Player, type PlayerId } from './player';
 import { sound } from './sound';
 import {
@@ -27,7 +33,8 @@ export class Engine {
   mode: GameMode = 'battle';
   onlineRole: OnlineRole = null;
   state: GameState = 'menu';
-  map: GameMap = createMap();
+  mapId: string = loadMapId();
+  map: GameMap = buildSelectedMap(this.mapId).map;
   players: Player[] = [];
   enemies: Enemy[] = [];
   bombs: Bomb[] = [];
@@ -96,6 +103,11 @@ export class Engine {
         if (online) return; // host의 P2는 guest 입력으로만 조종
         const p2 = this.players[1];
         if (p2) this.placeBomb(p2);
+        else if (this.mode === 'solo') {
+          // 솔로에선 Enter도 1P 물풍선 (방향키+Enter 원작 조합)
+          const p1 = this.players[0];
+          if (p1) this.placeBomb(p1);
+        }
       }
     });
     window.addEventListener('keyup', (e) => {
@@ -112,7 +124,7 @@ export class Engine {
     this.mode = 'battle';
     this.onlineRole = null;
     this.guestInput = { dx: 0, dy: 0 };
-    this.map = createMap();
+    this.map = buildSelectedMap(this.mapId).map;
     this.players = [];
     this.enemies = [];
     this.bombs = [];
@@ -134,9 +146,10 @@ export class Engine {
     this.mode = 'battle';
     this.onlineRole = null;
     this.guestInput = { dx: 0, dy: 0 };
-    this.map = createMap(0.6);
-    const p1 = createPlayer(1, 1, 1, '#3b82f6', '1P');
-    const p2 = createPlayer(COLS - 2, ROWS - 2, 2, '#ef4444', '2P');
+    const built = buildSelectedMap(this.mapId);
+    this.map = built.map;
+    const p1 = createPlayer(built.spawns[0].x, built.spawns[0].y, 1, '#3b82f6', '1P');
+    const p2 = createPlayer(built.spawns[1].x, built.spawns[1].y, 2, '#ef4444', '2P');
     p1.invincibleUntil = performance.now() + 1000;
     p2.invincibleUntil = performance.now() + 1000;
     this.players = [p1, p2];
@@ -171,9 +184,10 @@ export class Engine {
     sound.unlock();
     this.mode = 'online';
     this.onlineRole = 'host';
-    this.map = createMap(0.6);
-    const p1 = createPlayer(1, 1, 1, '#3b82f6', '1P(HOST)');
-    const p2 = createPlayer(COLS - 2, ROWS - 2, 2, '#ef4444', '2P(GUEST)');
+    const built = buildSelectedMap(this.mapId);
+    this.map = built.map;
+    const p1 = createPlayer(built.spawns[0].x, built.spawns[0].y, 1, '#3b82f6', '1P(HOST)');
+    const p2 = createPlayer(built.spawns[1].x, built.spawns[1].y, 2, '#ef4444', '2P(GUEST)');
     const now = performance.now();
     p1.invincibleUntil = now + 1000;
     p2.invincibleUntil = now + 1000;
@@ -199,7 +213,7 @@ export class Engine {
   prepareOnlineGuest(): void {
     this.mode = 'online';
     this.onlineRole = 'guest';
-    this.map = createMap(0.6);
+    this.map = buildSelectedMap(this.mapId).map;
     this.players = [];
     this.enemies = [];
     this.bombs = [];
@@ -228,6 +242,7 @@ export class Engine {
       winner: this.winner,
       score: this.score,
       stage: this.stage,
+      mapId: this.mapId,
       map: this.map.map((row) => [...row]),
       players: this.players.map((p) => ({
         id: p.id,
@@ -261,6 +276,7 @@ export class Engine {
 
   applySnapshot(snap: Snapshot): void {
     const now = performance.now();
+    this.mapId = getMapDef(snap.mapId).id;
     this.map = snap.map.map((row) => [...row]) as GameMap;
     this.players = snap.players.map((s) => ({
       id: s.id,
@@ -328,13 +344,10 @@ export class Engine {
 
   private setupStage(): void {
     const cfg = stageConfig(this.stage);
-    this.map = createMap(cfg.density, [
-      { x: 1, y: 1 },
-      { x: 2, y: 1 },
-      { x: 1, y: 2 },
-    ]);
+    const built = buildSelectedMap(this.mapId, cfg.density);
+    this.map = built.map;
     const prev = this.players[0];
-    const p = createPlayer(1, 1, 1, '#3b82f6', '1P');
+    const p = createPlayer(built.spawns[0].x, built.spawns[0].y, 1, '#3b82f6', '1P');
     if (prev) {
       // 파워업·점수는 스테이지 간 유지
       p.maxBombs = prev.maxBombs;
@@ -617,11 +630,20 @@ export class Engine {
     }
     let dx = 0;
     let dy = 0;
+    // 1P: WASD 항상 + 솔로/온라인에선 방향키도 (원작 조작감)
+    // (로컬 대전에서 방향키는 2P 차지)
+    const p1Arrows = id === 1 && this.mode !== 'battle';
     if (id === 1) {
       if (this.keys.has('a')) dx -= 1;
       if (this.keys.has('d')) dx += 1;
       if (this.keys.has('w')) dy -= 1;
       if (this.keys.has('s')) dy += 1;
+      if (p1Arrows) {
+        if (this.keys.has('arrowleft')) dx -= 1;
+        if (this.keys.has('arrowright')) dx += 1;
+        if (this.keys.has('arrowup')) dy -= 1;
+        if (this.keys.has('arrowdown')) dy += 1;
+      }
     } else {
       if (this.keys.has('arrowleft')) dx -= 1;
       if (this.keys.has('arrowright')) dx += 1;
@@ -731,7 +753,7 @@ export class Engine {
 
   render(ctx: CanvasRenderingContext2D): void {
     const now = performance.now();
-    drawMap(ctx, this.map);
+    drawMap(ctx, this.map, themeFor(this.mapId));
     drawItems(ctx, this.items);
 
     ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';

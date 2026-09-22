@@ -1,7 +1,7 @@
 {
   "name": "crazy-arcade",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "크레이지 아케이드 클론 (TypeScript + Canvas)",
   "type": "module",
   "scripts": {

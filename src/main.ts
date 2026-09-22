@@ -1,9 +1,11 @@
 import './style.css';
 import { COLS, ROWS, TILE } from './game/constants';
 import { Engine, type TouchDir } from './game/engine';
+import { buildSelectedMap, MAPS, saveMapId } from './game/maps';
 import { defaultServerUrl, NetClient, type Snapshot } from './game/net';
 import type { PlayerId } from './game/player';
 import { sound } from './game/sound';
+import { drawMap } from './game/sprites';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 canvas.width = COLS * TILE;
@@ -19,6 +21,7 @@ const menuBtn = document.getElementById('menuBtn') as HTMLButtonElement;
 const muteBtn = document.getElementById('muteBtn') as HTMLButtonElement;
 const soloBtn = document.getElementById('soloBtn') as HTMLButtonElement;
 const battleBtn = document.getElementById('battleBtn') as HTMLButtonElement;
+const mapGrid = document.getElementById('mapGrid') as HTMLDivElement;
 const pad1 = document.querySelector<HTMLDivElement>('.pad[data-player="1"]');
 const pad2 = document.querySelector<HTMLDivElement>('.pad[data-player="2"]');
 
@@ -162,6 +165,40 @@ refreshMute();
 
 soloBtn.addEventListener('click', () => engine.startSolo());
 battleBtn.addEventListener('click', () => engine.startBattle());
+
+// --- 맵 선택 그리드 (미리보기 렌더) ---
+function refreshMapGrid(): void {
+  mapGrid.innerHTML = '';
+  for (const def of MAPS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mapCard' + (def.id === engine.mapId ? ' selected' : '');
+    const cv = document.createElement('canvas');
+    cv.width = 150;
+    cv.height = 130;
+    const c = cv.getContext('2d')!;
+    c.scale(150 / (COLS * TILE), 130 / (ROWS * TILE));
+    drawMap(c, buildSelectedMap(def.id).map, def.theme);
+    const label = document.createElement('div');
+    label.className = 'mapLabel';
+    const name = document.createElement('b');
+    name.textContent = def.name;
+    const desc = document.createElement('span');
+    desc.textContent = def.desc;
+    label.append(name, desc);
+    btn.append(cv, label);
+    btn.addEventListener('click', () => {
+      sound.unlock();
+      sound.play('click');
+      engine.mapId = def.id;
+      saveMapId(def.id);
+      engine.toMenu();
+      refreshMapGrid();
+    });
+    mapGrid.append(btn);
+  }
+}
+refreshMapGrid();
 restartBtn.addEventListener('click', () => {
   sound.unlock();
   if (engine.state === 'menu') {
