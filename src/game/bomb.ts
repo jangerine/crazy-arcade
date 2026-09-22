@@ -10,6 +10,7 @@ export interface Bomb {
 }
 
 export interface Explosion {
+  id: number;
   cells: { x: number; y: number }[];
   startedAt: number;
 }

@@ -4,9 +4,10 @@ TypeScript + HTML Canvas로 만드는 크레이지 아케이드(BNBD) 클론 프
 
 https://github.com/jangerine/crazy-arcade
 
-## 현재 상태 (v0.4 - 풀버전)
+## 현재 상태 (v0.5 - 온라인 대전)
 
-- [x] 시작 메뉴: 🙋 1P 스테이지 / ⚔️ 2P 대전
+- [x] 시작 메뉴: 🙋 1P 스테이지 / ⚔️ 2P 대전 / 🌐 온라인 대전
+- [x] 온라인 대전: 방 코드 방식 1:1 (host-권위, 15Hz 스냅샷, 입력 중계, 핑 표시)
 - [x] 1P 스테이지: 추적형 적 AI + 무한 스테이지 (적·속도·블록 증가) + ❤️3 목숨 + 부활 무적
 - [x] 2P 대전: 동시 이동, 폭탄 소유권, 연쇄 폭발, 승패 판정
 - [x] 물풍선 + 십자 폭발 + 블록 파괴 (+10점) + 적 처치 (+500점)
@@ -15,8 +16,8 @@ https://github.com/jangerine/crazy-arcade
 - [x] 스프라이트: 타일 질감, 방향 눈, 물풍선 심지, 유령 몬스터, 아이템 둥실 효과
 - [x] 사운드: WebAudio 합성 효과음 8종 (설치/폭발/획득/사망/승리/패배/클릭/클리어) + 음소거 (M)
 - [x] 일시정지 (P/Esc/버튼), R/버튼 재시작, 메뉴 복귀
-- [x] 모바일: 반응형 캔버스 + 1P/2P 터치 패드 멀티터치 (솔로에선 2P 패드 자동 숨김)
-- [ ] 온라인 대전 — 정적 페이지라 서버가 없어서 미지원 (버튼 준비중 표시)
+- [x] 모바일: 반응형 캔버스 + 1P/2P 터치 패드 멀티터치 (솔로·온라인에선 자기 패드만 표시)
+- [ ] (없음 — 다 넣었어요. 아이디어 환영!)
 
 ## 실행 방법
 
@@ -24,9 +25,22 @@ Node.js 22 LTS 권장:
 
 ```bash
 npm install
-npm run dev
-# http://localhost:5173
+npm run dev     # 게임 http://localhost:5173
+npm run server  # 온라인 릴레이 서버 ws://localhost:8081 (PORT=8081 변경 가능)
 ```
+
+## 온라인 대전 방법
+
+1. 한 PC에서 `npm run server` 실행 (방 코드 발급·중계 서버)
+2. 두 플레이어가 게임 메뉴 → 🌐 온라인 대전
+   - 같은 PC: 브라우저 탭 2개 (서버 주소 그대로 `ws://localhost:8081`)
+   - 같은 와이파이: 서버 PC의 IP 입력 (예: `ws://192.168.0.5:8081`)
+3. 한 명이 **방 만들기** → 4자리 코드 공유 → 다른 명이 코드 입력 후 **참가하기**
+4. 참가자가 들어오면 자동 시작 (만든 사람 = HOST 1P WASD, 들어온 사람 = GUEST 2P 방향키)
+5. HUD에 방 코드·핑 표시, R로 재시작 (게스트의 R은 host에 재시작 요청)
+
+방식: host-권위 — host가 시뮬레이션하고 15Hz 스냅샷을 방송, guest는 렌더만 하고
+입력(P2 이동·💣)을 전송. 서버는 게임 상태를 저장하지 않는 단순 중계기.
 
 ## 조작법
 
@@ -46,7 +60,7 @@ npm run dev
 
 ```
 src/
-  main.ts          # 부트스트랩 + 게임 루프 + 메뉴/HUD/터치 배선
+  main.ts          # 부트스트랩 + 게임 루프 + 메뉴/HUD/터치/온라인 배선
   style.css        # 반응형 + 메뉴 + 터치 패드
   game/
     constants.ts   # TILE, COLS, ROWS, 밸런스 값
@@ -58,5 +72,8 @@ src/
     item.ts        # 🎈/💧/⚡ 드롭·적용·상한
     sound.ts       # WebAudio 합성 효과음 + 음소거 저장
     sprites.ts     # 캔버스 스프라이트
-    engine.ts      # 모드/상태머신 + update + render
+    engine.ts      # 모드/상태머신 + update + render + 스냅샷 직렬화
+    net.ts         # 온라인 WS 클라이언트 + 스냅샷 타입
+server/
+  index.mjs        # 방 코드 + host↔guest 중계 릴레이 서버 (npm run server)
 ```

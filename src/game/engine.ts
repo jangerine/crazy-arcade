@@ -1,4 +1,4 @@
-import { COLS, EXPLOSION_MS, ROWS, TILE, Tile } from './constants';
+import { BOMB_FUSE_MS, COLS, EXPLOSION_MS, ROWS, TILE, Tile } from './constants';
 import { createBomb, isBombReadyToExplode, type Bomb, type Explosion } from './bomb';
 import { spawnEnemies, type Enemy } from './enemy';
 import { applyItem, rollItem, type Item } from './item';
@@ -13,15 +13,19 @@ import {
   drawPlayers,
 } from './sprites';
 import { stageConfig } from './stage';
+import type { Snapshot } from './net';
 
-export type GameMode = 'battle' | 'solo';
+export type GameMode = 'battle' | 'solo' | 'online';
+export type OnlineRole = 'host' | 'guest' | null;
 export type GameState = 'menu' | 'playing' | 'paused' | 'over';
 export type TouchDir = 'up' | 'down' | 'left' | 'right';
 
 const BEST_KEY = 'ca_best';
+const SNAP_SEND_MS = 66;
 
 export class Engine {
   mode: GameMode = 'battle';
+  onlineRole: OnlineRole = null;
   state: GameState = 'menu';
   map: GameMap = createMap();
   players: Player[] = [];
@@ -36,7 +40,17 @@ export class Engine {
   score = 0;
   best = Number(localStorage.getItem(BEST_KEY) ?? 0) || 0;
   clearBannerUntil = 0;
+  /** 온라인 host가 guest에게 받은 최신 입력 (P2 조종용) */
+  guestInput = { dx: 0, dy: 0 };
+  /** 스냅샷 방송 훅 (main에서 net.sendSnap 연결) */
+  onSnapshot: ((snap: Snapshot) => void) | null = null;
+  /** 온라인 guest 로컬 폭탄키 → net 전송 훅 */
+  onGuestBombLocal: (() => void) | null = null;
+  /** 온라인 guest R키 → 재시작 요청 훅 */
+  onRestartReqLocal: (() => void) | null = null;
   private pendingNextStageAt = 0;
+  private nextFxId = 1;
+  private lastSnapSent = 0;
   onStateChange: (() => void) | null = null;
 
   constructor() {
@@ -45,12 +59,15 @@ export class Engine {
       const k = e.key.toLowerCase();
 
       if (this.state === 'menu') return; // 메뉴는 DOM 버튼/Enter 처리
-      if (k === 'p' || e.key === 'Escape') {
+      const online = this.mode === 'online';
+      const guest = online && this.onlineRole === 'guest';
+      if ((k === 'p' || e.key === 'Escape') && !online) {
         this.togglePause();
         return;
       }
       if (k === 'r') {
-        this.restart();
+        if (guest) this.onRestartReqLocal?.();
+        else this.restart();
         return;
       }
       if (this.state !== 'playing') return;
@@ -61,11 +78,20 @@ export class Engine {
 
       if (e.key === ' ' || k === 'f') {
         e.preventDefault();
+        if (guest) {
+          this.onGuestBombLocal?.();
+          return;
+        }
         const p1 = this.players[0];
         if (p1) this.placeBomb(p1);
       }
       if (e.key === 'Enter') {
         e.preventDefault();
+        if (guest) {
+          this.onGuestBombLocal?.();
+          return;
+        }
+        if (online) return; // host의 P2는 guest 입력으로만 조종
         const p2 = this.players[1];
         if (p2) this.placeBomb(p2);
       }
@@ -82,6 +108,8 @@ export class Engine {
 
   toMenu(notify = true): void {
     this.mode = 'battle';
+    this.onlineRole = null;
+    this.guestInput = { dx: 0, dy: 0 };
     this.map = createMap();
     this.players = [];
     this.enemies = [];
@@ -101,6 +129,8 @@ export class Engine {
     sound.unlock();
     sound.play('click');
     this.mode = 'battle';
+    this.onlineRole = null;
+    this.guestInput = { dx: 0, dy: 0 };
     this.map = createMap(0.6);
     const p1 = createPlayer(1, 1, 1, '#3b82f6', '1P');
     const p2 = createPlayer(COLS - 2, ROWS - 2, 2, '#ef4444', '2P');
@@ -124,6 +154,7 @@ export class Engine {
     sound.unlock();
     sound.play('click');
     this.mode = 'solo';
+    this.onlineRole = null;
     this.stage = 1;
     this.score = 0;
     this.winner = null;
@@ -131,12 +162,154 @@ export class Engine {
     this.setState('playing');
   }
 
+  /** 온라인 host: 배틀 필드 생성 + P2는 guest 입력으로 조종 */
+  startOnlineHost(): void {
+    sound.unlock();
+    this.mode = 'online';
+    this.onlineRole = 'host';
+    this.map = createMap(0.6);
+    const p1 = createPlayer(1, 1, 1, '#3b82f6', '1P(HOST)');
+    const p2 = createPlayer(COLS - 2, ROWS - 2, 2, '#ef4444', '2P(GUEST)');
+    const now = performance.now();
+    p1.invincibleUntil = now + 1000;
+    p2.invincibleUntil = now + 1000;
+    this.players = [p1, p2];
+    this.enemies = [];
+    this.bombs = [];
+    this.explosions = [];
+    this.items = [];
+    this.touchDirs = { 1: new Set(), 2: new Set() };
+    this.guestInput = { dx: 0, dy: 0 };
+    this.winner = null;
+    this.stage = 1;
+    this.score = 0;
+    this.pendingNextStageAt = 0;
+    this.clearBannerUntil = 0;
+    this.lastSnapSent = 0;
+    this.setState('playing');
+    this.emitSnapshot(true);
+  }
+
+  /** 온라인 guest: 첫 스냅샷이 오기 전까지 빈 필드로 대기 */
+  prepareOnlineGuest(): void {
+    this.mode = 'online';
+    this.onlineRole = 'guest';
+    this.map = createMap(0.6);
+    this.players = [];
+    this.enemies = [];
+    this.bombs = [];
+    this.explosions = [];
+    this.items = [];
+    this.touchDirs = { 1: new Set(), 2: new Set() };
+    this.winner = null;
+    this.stage = 1;
+    this.score = 0;
+    this.pendingNextStageAt = 0;
+    this.clearBannerUntil = 0;
+    this.setState('playing');
+  }
+
+  /** guest가 보낼 로컬 P2 입력 (키보드 방향키 + 터치 패드 2) */
+  localP2Input(): { dx: number; dy: number } {
+    return this.inputFor(2);
+  }
+
+  toSnapshot(): Snapshot {
+    const now = performance.now();
+    return {
+      v: 1,
+      state: this.state === 'over' ? 'over' : 'playing',
+      winner: this.winner,
+      score: this.score,
+      stage: this.stage,
+      map: this.map.map((row) => [...row]),
+      players: this.players.map((p) => ({
+        id: p.id,
+        name: p.name,
+        x: p.x,
+        y: p.y,
+        speed: p.speed,
+        maxBombs: p.maxBombs,
+        range: p.range,
+        color: p.color,
+        alive: p.alive,
+        lives: p.lives,
+        facing: p.facing,
+        invincibleIn: Math.max(0, p.invincibleUntil - now),
+      })),
+      bombs: this.bombs.map((b) => ({
+        x: b.x,
+        y: b.y,
+        range: b.range,
+        ownerId: b.ownerId,
+        fuseIn: Math.max(0, BOMB_FUSE_MS - (now - b.placedAt)),
+      })),
+      items: this.items.map((it) => ({ ...it })),
+      explosions: this.explosions.map((e) => ({
+        id: e.id,
+        cells: e.cells.map((c) => ({ ...c })),
+        age: now - e.startedAt,
+      })),
+    };
+  }
+
+  applySnapshot(snap: Snapshot): void {
+    const now = performance.now();
+    this.map = snap.map.map((row) => [...row]) as GameMap;
+    this.players = snap.players.map((s) => ({
+      id: s.id,
+      name: s.name,
+      x: s.x,
+      y: s.y,
+      spawnX: s.x,
+      spawnY: s.y,
+      speed: s.speed,
+      maxBombs: s.maxBombs,
+      range: s.range,
+      color: s.color,
+      alive: s.alive,
+      lives: s.lives,
+      facing: s.facing,
+      invincibleUntil: now + s.invincibleIn,
+    }));
+    this.bombs = snap.bombs.map((s) => ({
+      x: s.x,
+      y: s.y,
+      placedAt: now - (BOMB_FUSE_MS - s.fuseIn),
+      range: s.range,
+      ownerId: s.ownerId,
+    }));
+    this.items = snap.items.map((it) => ({ ...it }));
+    this.explosions = snap.explosions.map((e) => ({
+      id: e.id,
+      cells: e.cells.map((c) => ({ ...c })),
+      startedAt: now - e.age,
+    }));
+    this.winner = snap.winner;
+    this.score = snap.score;
+    this.stage = snap.stage;
+    if (this.state !== snap.state) this.setState(snap.state);
+  }
+
+  /** host 루프에서 호출: 스로틀된 스냅샷 방송 */
+  emitSnapshot(force = false): void {
+    if (this.mode !== 'online' || this.onlineRole !== 'host') return;
+    if (!this.onSnapshot) return;
+    const now = performance.now();
+    if (!force && now - this.lastSnapSent < SNAP_SEND_MS) return;
+    this.lastSnapSent = now;
+    this.onSnapshot(this.toSnapshot());
+  }
+
   restart(): void {
     if (this.mode === 'solo') this.startSolo();
-    else this.startBattle();
+    else if (this.mode === 'online') {
+      if (this.onlineRole === 'host') this.startOnlineHost();
+    } else this.startBattle();
   }
 
   togglePause(): void {
+    if (this.mode === 'online') return; // 온라인은 일시정지 미지원
     if (this.state === 'playing') {
       this.setState('paused');
       sound.play('click');
@@ -230,6 +403,8 @@ export class Engine {
     this.explosions = this.explosions.filter(
       (e) => now - e.startedAt < EXPLOSION_MS,
     );
+    // 온라인 guest는 시뮬레이션 없이 host 스냅샷만 렌더
+    if (this.mode === 'online' && this.onlineRole === 'guest') return;
     if (this.state !== 'playing') return;
 
     // 솔로 스테이지 전환 예약
@@ -408,6 +583,14 @@ export class Engine {
   }
 
   private inputFor(id: PlayerId): { dx: number; dy: number } {
+    // 온라인 host의 P2는 guest가 보낸 입력으로만 조종
+    if (this.mode === 'online' && this.onlineRole === 'host' && id === 2) {
+      const g = this.guestInput;
+      const dx = g.dx !== 0 ? Math.sign(g.dx) : 0;
+      let dy = g.dy !== 0 ? Math.sign(g.dy) : 0;
+      if (dx !== 0) dy = 0;
+      return { dx, dy };
+    }
     let dx = 0;
     let dy = 0;
     if (id === 1) {
@@ -498,7 +681,7 @@ export class Engine {
       if (dropped) this.items.push(dropped);
     }
 
-    this.explosions.push({ cells, startedAt: now });
+    this.explosions.push({ id: this.nextFxId++, cells, startedAt: now });
     sound.play('explode');
 
     for (const other of this.bombs) {
@@ -583,7 +766,7 @@ export class Engine {
       ctx.textAlign = 'center';
       ctx.font = 'bold 36px system-ui';
       let msg: string;
-      if (this.mode === 'battle') {
+      if (this.mode === 'battle' || this.mode === 'online') {
         msg =
           this.winner === 0
             ? '무승부!'

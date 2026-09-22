@@ -135,6 +135,62 @@ body.touch .touch-only {
   line-height: 1.6;
 }
 
+.online-box {
+  border: 1px dashed #475569;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.online-title {
+  font-weight: 700;
+}
+
+.online-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  color: #cbd5e1;
+  font-size: 14px;
+}
+
+.online-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #fff;
+  font-family: ui-monospace, monospace;
+}
+
+#joinCode {
+  text-transform: uppercase;
+}
+
+.online-row button {
+  white-space: nowrap;
+}
+
+#onlineStatus {
+  min-height: 20px;
+  font-size: 14px;
+  color: #fde047;
+  word-break: keep-all;
+}
+
+.online-box code {
+  background: #0f172a;
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+
 #controls {
   display: flex;
   gap: 8px;

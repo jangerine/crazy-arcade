@@ -29,9 +29,25 @@
             <p>모드를 선택하세요</p>
             <button id="soloBtn" type="button">🙋 1P 스테이지 (적 처치)</button>
             <button id="battleBtn" type="button">⚔️ 2P 대전 (같은 기기)</button>
-            <button type="button" disabled title="서버 없이 동작하는 정적 페이지라 온라인은 아직 지원하지 않아요">
-              🌐 온라인 대전 (준비중)
-            </button>
+            <div class="online-box">
+              <div class="online-title">🌐 온라인 대전 (2인, 방 코드 방식)</div>
+              <label class="online-row">
+                서버
+                <input id="serverUrl" type="text" spellcheck="false" />
+              </label>
+              <div class="online-row">
+                <button id="createBtn" type="button">방 만들기</button>
+              </div>
+              <div class="online-row">
+                <input id="joinCode" type="text" placeholder="코드 4자리" maxlength="4" />
+                <button id="joinBtn" type="button">참가하기</button>
+              </div>
+              <div id="onlineStatus" aria-live="polite"></div>
+              <p class="menu-help">
+                먼저 <code>npm run server</code>로 릴레이 서버를 켜세요.<br />
+                같은 와이파이에선 서버 PC의 IP로 접속 (예: ws://192.168.0.5:8081)
+              </p>
+            </div>
             <p class="menu-help">
               PC: 1P WASD+Space · 2P 방향키+Enter<br />
               모바일: 하단 터치 패드 · 🎈💧⚡ 아이템을 모아보세요!
