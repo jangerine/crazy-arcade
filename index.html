@@ -2,7 +2,10 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>크레이지 아케이드</title>
   </head>
   <body>
@@ -14,7 +17,37 @@
         <span class="p2">2P 빨강: 방향키 + Enter</span>
         &nbsp;·&nbsp; 재시작: R
       </p>
+      <p class="help touch-only">
+        📱 모바일: 왼쪽 패드 = 1P, 오른쪽 패드 = 2P · 💣 버튼으로 물풍선
+      </p>
+      <div id="hud"></div>
       <canvas id="game" width="600" height="520"></canvas>
+      <div>
+        <button id="restartBtn" type="button">↻ 다시 시작 (R)</button>
+      </div>
+
+      <div id="touch">
+        <div class="pad" data-player="1">
+          <div class="pad-title p1">1P</div>
+          <div class="dpad">
+            <button type="button" data-dir="up" aria-label="1P 위">▲</button>
+            <button type="button" data-dir="left" aria-label="1P 왼쪽">◀</button>
+            <button type="button" data-dir="down" aria-label="1P 아래">▼</button>
+            <button type="button" data-dir="right" aria-label="1P 오른쪽">▶</button>
+          </div>
+          <button type="button" class="bombBtn" data-bomb="1">💣</button>
+        </div>
+        <div class="pad" data-player="2">
+          <div class="pad-title p2">2P</div>
+          <div class="dpad">
+            <button type="button" data-dir="up" aria-label="2P 위">▲</button>
+            <button type="button" data-dir="left" aria-label="2P 왼쪽">◀</button>
+            <button type="button" data-dir="down" aria-label="2P 아래">▼</button>
+            <button type="button" data-dir="right" aria-label="2P 오른쪽">▶</button>
+          </div>
+          <button type="button" class="bombBtn" data-bomb="2">💣</button>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

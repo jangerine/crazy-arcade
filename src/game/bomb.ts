@@ -1,4 +1,4 @@
-import { BOMB_FUSE_MS, BOMB_RANGE } from './constants';
+import { BOMB_FUSE_MS } from './constants';
 import type { PlayerId } from './player';
 
 export interface Bomb {
@@ -18,9 +18,10 @@ export function createBomb(
   x: number,
   y: number,
   ownerId: PlayerId,
+  range: number,
   now: number = performance.now(),
 ): Bomb {
-  return { x, y, placedAt: now, range: BOMB_RANGE, ownerId };
+  return { x, y, placedAt: now, range, ownerId };
 }
 
 export function isBombReadyToExplode(b: Bomb, now: number): boolean {

@@ -10,6 +10,7 @@ export interface Player {
   spawnY: number;
   speed: number; // tiles/sec
   maxBombs: number;
+  range: number; // 물줄기 길이
   color: string;
   alive: boolean;
 }
@@ -30,6 +31,7 @@ export function createPlayer(
     spawnY: y,
     speed: 5,
     maxBombs: 1,
+    range: 2,
     color,
     alive: true,
   };

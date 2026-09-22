@@ -1,9 +1,11 @@
 import { COLS, EXPLOSION_MS, ROWS, TILE, Tile } from './constants';
 import { createBomb, isBombReadyToExplode, type Bomb, type Explosion } from './bomb';
+import { applyItem, rollItem, ITEM_META, type Item } from './item';
 import { createMap, type GameMap } from './map';
 import { createPlayer, type Player, type PlayerId } from './player';
 
 export type GameState = 'playing' | 'over';
+export type TouchDir = 'up' | 'down' | 'left' | 'right';
 
 export class Engine {
   map: GameMap = createMap();
@@ -13,7 +15,9 @@ export class Engine {
   ];
   bombs: Bomb[] = [];
   explosions: Explosion[] = [];
+  items: Item[] = [];
   keys = new Set<string>();
+  touchDirs: Record<PlayerId, Set<TouchDir>> = { 1: new Set(), 2: new Set() };
   state: GameState = 'playing';
   winner: PlayerId | 0 | null = null; // 0 = 무승부
 
@@ -53,8 +57,24 @@ export class Engine {
     ];
     this.bombs = [];
     this.explosions = [];
+    this.items = [];
+    this.touchDirs = { 1: new Set(), 2: new Set() };
     this.state = 'playing';
     this.winner = null;
+  }
+
+  // --- 모바일 터치 API ---
+  touchDown(id: PlayerId, dir: TouchDir): void {
+    this.touchDirs[id].add(dir);
+  }
+
+  touchUp(id: PlayerId, dir: TouchDir): void {
+    this.touchDirs[id].delete(dir);
+  }
+
+  pressBomb(id: PlayerId): void {
+    const p = this.players.find((pl) => pl.id === id);
+    if (p) this.placeBomb(p);
   }
 
   placeBomb(player: Player): void {
@@ -69,7 +89,9 @@ export class Engine {
     if (this.bombs.some((b) => b.x === tx && b.y === ty)) return;
     // 폭탄은 빈 타일에만 (플레이어 발밑이 빈칸이므로 사실상 항상 가능)
     if (this.map[ty]?.[tx] !== Tile.Empty) return;
-    this.bombs.push(createBomb(tx, ty, player.id, now));
+    // 아이템 위에서는 설치 불가 (겹침 방지)
+    if (this.items.some((it) => it.x === tx && it.y === ty)) return;
+    this.bombs.push(createBomb(tx, ty, player.id, player.range, now));
   }
 
   update(dt: number): void {
@@ -96,6 +118,18 @@ export class Engine {
       }
     }
 
+    // 아이템 줍기
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      const ptx = Math.floor(p.x + 0.5);
+      const pty = Math.floor(p.y + 0.5);
+      const idx = this.items.findIndex((it) => it.x === ptx && it.y === pty);
+      if (idx !== -1) {
+        const [picked] = this.items.splice(idx, 1);
+        applyItem(p, picked.kind);
+      }
+    }
+
     // 폭탄 폭발 (+ 연쇄 폭발)
     let guard = 0;
     let exploded = true;
@@ -116,7 +150,6 @@ export class Engine {
     // 승패 판정
     const alive = this.players.filter((p) => p.alive);
     if (alive.length <= 1 && this.players.length === 2) {
-      // 최소 1틱은 진행된 후 판정 (스폰킬 방지용 가드 아님, 즉시 판정)
       if (alive.length === 1) {
         this.state = 'over';
         this.winner = alive[0].id;
@@ -131,18 +164,26 @@ export class Engine {
     let dx = 0;
     let dy = 0;
     if (id === 1) {
-      // 1P: WASD
+      // 1P: WASD + 터치
       if (this.keys.has('a')) dx -= 1;
       if (this.keys.has('d')) dx += 1;
       if (this.keys.has('w')) dy -= 1;
       if (this.keys.has('s')) dy += 1;
     } else {
-      // 2P: 방향키
+      // 2P: 방향키 + 터치
       if (this.keys.has('arrowleft')) dx -= 1;
       if (this.keys.has('arrowright')) dx += 1;
       if (this.keys.has('arrowup')) dy -= 1;
       if (this.keys.has('arrowdown')) dy += 1;
     }
+    const t = this.touchDirs[id];
+    if (t.has('left')) dx -= 1;
+    if (t.has('right')) dx += 1;
+    if (t.has('up')) dy -= 1;
+    if (t.has('down')) dy += 1;
+
+    if (dx !== 0) dx = Math.sign(dx);
+    if (dy !== 0) dy = Math.sign(dy);
     if (dx !== 0 && dy !== 0) dy = 0; // 대각선 방지
     return { dx, dy };
   }
@@ -180,6 +221,7 @@ export class Engine {
       [0, 1],
       [0, -1],
     ];
+    const destroyedBlocks: { x: number; y: number }[] = [];
     for (const [dx, dy] of dirs) {
       for (let i = 1; i <= bomb.range; i++) {
         const x = bomb.x + dx * i;
@@ -190,10 +232,23 @@ export class Engine {
         cells.push({ x, y });
         if (t === Tile.Block) {
           this.map[y][x] = Tile.Empty;
+          destroyedBlocks.push({ x, y });
           break;
         }
       }
     }
+
+    // 물줄기에 닿은 아이템은 소멸
+    this.items = this.items.filter(
+      (it) => !cells.some((c) => c.x === it.x && c.y === it.y),
+    );
+    // 파괴된 블록에서 아이템 드롭
+    for (const b of destroyedBlocks) {
+      if (this.items.some((it) => it.x === b.x && it.y === b.y)) continue;
+      const dropped = rollItem(b.x, b.y);
+      if (dropped) this.items.push(dropped);
+    }
+
     this.explosions.push({ cells, startedAt: now });
 
     // 연쇄 폭발: 물줄기에 닿은 다른 폭탄은 즉시 터지게
@@ -228,6 +283,26 @@ export class Engine {
       }
     }
 
+    // 아이템
+    for (const it of this.items) {
+      const meta = ITEM_META[it.kind];
+      const cx = it.x * TILE + TILE / 2;
+      const cy = it.y * TILE + TILE / 2;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, TILE * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = meta.color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, TILE * 0.24, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = '18px system-ui';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(meta.emoji, cx, cy + 1);
+    }
+    ctx.textBaseline = 'alphabetic';
+
     for (const e of this.explosions) {
       ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';
       for (const c of e.cells) {
@@ -239,9 +314,7 @@ export class Engine {
     for (const b of this.bombs) {
       const blink = Math.floor(now / 200) % 2 === 0;
       const owner = this.players.find((p) => p.id === b.ownerId);
-      ctx.fillStyle = blink
-        ? (owner?.color ?? '#0ea5e9')
-        : '#0c4a6e';
+      ctx.fillStyle = blink ? (owner?.color ?? '#0ea5e9') : '#0c4a6e';
       ctx.beginPath();
       ctx.arc(
         b.x * TILE + TILE / 2,
@@ -307,7 +380,7 @@ export class Engine {
       ctx.font = '18px system-ui';
       ctx.fillStyle = '#cbd5e1';
       ctx.fillText(
-        'R 키로 재시작',
+        'R 키 / 다시 시작 버튼으로 재시작',
         (COLS * TILE) / 2,
         (ROWS * TILE) / 2 + 28,
       );
